@@ -996,66 +996,83 @@ def process_tickers(_tickers, _etf_histories, _sector_etf_map):
     return results_df.infer_objects(copy=False), failed_tickers, returns_dict
 
 # --- FIX: REPLACED ENTIRE FUNCTION TO BE MORE ROBUST AND PREVENT LINALGWARNING ---
+
+
 def check_multicollinearity(X, characteristics, vif_threshold=5.0):
     """
     Iteratively removes features with high Variance Inflation Factor (VIF)
-    to handle multicollinearity in a robust way. This prevents LinAlgWarning.
+    to handle multicollinearity in a robust way, suppressing expected warnings.
+
+    This function first cleans the data by removing zero-variance columns and
+    handling non-finite values. It then enters a loop that calculates VIF for
+    all features, identifies the feature with the highest VIF, and removes it
+    if it exceeds the threshold. This process repeats until all remaining
+    features have a VIF below the threshold. The specific `RuntimeWarning` for
+    division by zero (caused by perfect multicollinearity) is suppressed.
 
     Args:
         X (pd.DataFrame): The input feature matrix.
-        characteristics (list): The list of column names to consider.
+        characteristics (list): A list of column names in X to check for VIF.
         vif_threshold (float): The threshold above which features are removed.
 
     Returns:
         list: A list of feature names with VIF below the threshold.
     """
+    # 1. Handle edge cases where VIF is not applicable
     if X.empty or X.shape[1] < 2:
         return characteristics
 
-    # Work on a copy and ensure data is clean for VIF calculation
-    X_clean = X.copy()
-    X_clean = X_clean.replace([np.inf, -np.inf], np.nan).fillna(X_clean.median())
+    # 2. Pre-process the data for VIF calculation
+    # Work on a copy of the relevant columns
+    X_vif = X[characteristics].copy()
+    
+    # Replace inf/-inf with NaN and then fill NaNs with the column median
+    X_vif.replace([np.inf, -np.inf], np.nan, inplace=True)
+    X_vif.fillna(X_vif.median(), inplace=True)
 
-    # Drop columns with zero variance, as they make VIF calculation impossible
-    non_zero_var_cols = [col for col in X_clean.columns if X_clean[col].var() > 1e-8]
-    X_vif = X_clean[non_zero_var_cols].copy()
+    # Drop columns with near-zero variance, as they are constant and cause VIF to fail
+    variances = X_vif.var()
+    non_zero_var_cols = variances[variances > 1e-8].index.tolist()
+    X_vif = X_vif[non_zero_var_cols]
 
-    # Start with the full list of valid characteristics
-    remaining_features = [c for c in characteristics if c in X_vif.columns]
+    if X_vif.shape[1] < 2:
+        return X_vif.columns.tolist()
 
-    if len(remaining_features) < 2:
-        return remaining_features
-
+    # 3. Iteratively remove features with the highest VIF
     while True:
-        # Stop if we have too few features left
-        if X_vif.shape[1] < 2:
+        # Create a DataFrame to hold VIF values
+        vif_data = pd.DataFrame()
+        vif_data["feature"] = X_vif.columns
+
+        # Suppress the specific RuntimeWarning during VIF calculation
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', category=RuntimeWarning)
+            try:
+                vif_data["VIF"] = [variance_inflation_factor(X_vif.values, i) for i in range(X_vif.shape[1])]
+            except Exception:
+                # In case of a different error (e.g., LinAlgError), drop the last column as a safe fallback
+                if not X_vif.empty:
+                    X_vif = X_vif.iloc[:, :-1]
+                    continue
+                else:
+                    break
+
+        # Find the feature with the maximum VIF
+        max_vif = vif_data['VIF'].max()
+
+        # If the highest VIF is below the threshold, the process is done
+        if max_vif < vif_threshold:
             break
 
-        try:
-            vif_data = pd.DataFrame()
-            vif_data["feature"] = X_vif.columns
-            vif_data["VIF"] = [variance_inflation_factor(X_vif.values, i) for i in range(X_vif.shape[1])]
-
-            max_vif = vif_data['VIF'].max()
-
-            # If the highest VIF is below the threshold, we are done
-            if max_vif < vif_threshold:
-                break
-
-            # Otherwise, find the feature with the highest VIF and remove it
-            feature_to_drop = vif_data.sort_values('VIF', ascending=False)['feature'].iloc[0]
-            X_vif = X_vif.drop(columns=[feature_to_drop])
-
-        except Exception as e:
-            # If any error occurs (including LinAlgError which can sometimes happen),
-            # drop the last column as a safe fallback and continue.
-            logging.error(f"Error during VIF calculation: {e}. Dropping last column as fallback.")
-            if not X_vif.empty:
-                X_vif = X_vif.iloc[:, :-1]
-            else:
-                break
-
-    # The remaining columns in X_vif are the ones that passed the check
+        # Otherwise, find the feature with the highest VIF and remove it
+        feature_to_drop = vif_data.sort_values('VIF', ascending=False)['feature'].iloc[0]
+        X_vif = X_vif.drop(columns=[feature_to_drop])
+        
+        # Stop if we run out of features
+        if X_vif.shape[1] < 2:
+            break
+            
+    # 4. Return the list of features that passed the VIF check
     final_characteristics = X_vif.columns.tolist()
     return final_characteristics
 
