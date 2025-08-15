@@ -24,7 +24,10 @@ import plotly.graph_objects as go
 from statsmodels.tsa.api import Holt
 from sklearn.preprocessing import RobustScaler
 import statsmodels.tsa.stattools as smt
+    
+import warnings
 
+  
 # --- Basic Configuration ---
 logging.basicConfig(filename='stock_analysis.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 st.set_page_config(page_title="Quantitative Portfolio Analysis", layout="wide")
