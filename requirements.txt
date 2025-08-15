@@ -1,0 +1,13 @@
+streamlit 
+pandas 
+numpy 
+yfinance 
+tqdm 
+scipy 
+cvxpy 
+arch 
+scikit-learn 
+statsmodels 
+tenacity 
+pandas-datareader 
+plotly
